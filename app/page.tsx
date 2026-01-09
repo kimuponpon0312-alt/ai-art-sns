@@ -1,8 +1,74 @@
+'use client';
+
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { createClient } from '@/lib/supabase/client';
+import AuthModal from '@/components/AuthModal';
 
 export default function Home() {
+  const router = useRouter();
+  const supabase = createClient();
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [user, setUser] = useState<any>(null);
+  const [profile, setProfile] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    // ユーザー認証状態を確認
+    const checkAuth = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      setUser(user);
+
+      if (user) {
+        // プロフィール情報を取得
+        const { data: profileData } = await supabase
+          .from('profiles')
+          .select('name')
+          .eq('id', user.id)
+          .single();
+        setProfile(profileData);
+      }
+
+      setLoading(false);
+    };
+
+    checkAuth();
+
+    // 認証状態の変更を監視
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      setUser(session?.user ?? null);
+      if (session?.user) {
+        const { data: profileData } = await supabase
+          .from('profiles')
+          .select('name')
+          .eq('id', session.user.id)
+          .single();
+        setProfile(profileData);
+      } else {
+        setProfile(null);
+      }
+      router.refresh();
+    });
+
+    return () => subscription.unsubscribe();
+  }, [router, supabase]);
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    router.refresh();
+  };
+
   return (
     <div className="min-h-screen bg-gray-900 text-white">
+      {/* 認証モーダル */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+      />
+
       {/* ヘッダー */}
       <header className="sticky top-0 z-50 bg-gray-900/95 backdrop-blur-md border-b border-gray-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -22,14 +88,47 @@ export default function Home() {
               <Link href="/gallery" className="text-gray-400 hover:text-white transition-colors">
                 ギャラリー
               </Link>
-              <Link href="/profile" className="text-gray-400 hover:text-white transition-colors">
-                プロフィール
-              </Link>
+              {user && (
+                <>
+                  <Link href="/dashboard" className="text-gray-400 hover:text-white transition-colors">
+                    ダッシュボード
+                  </Link>
+                  <Link href="/profile" className="text-gray-400 hover:text-white transition-colors">
+                    プロフィール
+                  </Link>
+                </>
+              )}
             </nav>
             <div className="flex items-center space-x-4">
-              <Link href="/gallery" className="px-6 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all shadow-lg hover:shadow-xl">
-                ギャラリーを見る
-              </Link>
+              {!loading && (
+                <>
+                  {user ? (
+                    <>
+                      <Link
+                        href="/gallery"
+                        className="px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all shadow-lg hover:shadow-xl font-semibold"
+                      >
+                        投稿する
+                      </Link>
+                      <button
+                        onClick={handleSignOut}
+                        className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors font-semibold"
+                      >
+                        ログアウト
+                      </button>
+                      {profile?.name && (
+                        <span className="text-sm text-gray-300 hidden md:inline">
+                          {profile.name}
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <Link href="/gallery" className="px-6 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">
+                      ギャラリーを見る
+                    </Link>
+                  )}
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -48,9 +147,18 @@ export default function Home() {
               アーティストのためのSNSプラットフォーム
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <Link href="/gallery" className="px-8 py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl hover:from-purple-700 hover:to-pink-700 transition-all shadow-lg hover:shadow-2xl text-lg font-semibold text-center">
-                今すぐ始める
-              </Link>
+              {user ? (
+                <Link href="/gallery" className="px-8 py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl hover:from-purple-700 hover:to-pink-700 transition-all shadow-lg hover:shadow-2xl text-lg font-semibold text-center">
+                  投稿する
+                </Link>
+              ) : (
+                <button
+                  onClick={() => setIsAuthModalOpen(true)}
+                  className="px-8 py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl hover:from-purple-700 hover:to-pink-700 transition-all shadow-lg hover:shadow-2xl text-lg font-semibold"
+                >
+                  今すぐ始める
+                </button>
+              )}
               <Link href="/gallery" className="px-8 py-4 bg-gray-800 text-white rounded-xl hover:bg-gray-700 transition-all shadow-lg border-2 border-gray-700 text-lg font-semibold text-center">
                 ギャラリーを見る
               </Link>
@@ -111,9 +219,18 @@ export default function Home() {
             <p className="text-xl text-purple-100 mb-8">
               AI防御機能と投げ銭システムで、作品を保護しながら直接収益化
             </p>
-            <Link href="/gallery" className="inline-block px-8 py-4 bg-white text-purple-600 rounded-xl hover:bg-gray-100 transition-all shadow-lg hover:shadow-2xl text-lg font-semibold">
-              今すぐ始める
-            </Link>
+            {user ? (
+              <Link href="/gallery" className="inline-block px-8 py-4 bg-white text-purple-600 rounded-xl hover:bg-gray-100 transition-all shadow-lg hover:shadow-2xl text-lg font-semibold">
+                投稿する
+              </Link>
+            ) : (
+              <button
+                onClick={() => setIsAuthModalOpen(true)}
+                className="px-8 py-4 bg-white text-purple-600 rounded-xl hover:bg-gray-100 transition-all shadow-lg hover:shadow-2xl text-lg font-semibold"
+              >
+                今すぐ始める
+              </button>
+            )}
           </div>
         </section>
       </main>
