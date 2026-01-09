@@ -1,6 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { createClient } from '@/lib/supabase/client';
 import PostCard from '@/components/PostCard';
 import SupporterRanking from '@/components/SupporterRanking';
 import ImageUpload from '@/components/ImageUpload';
@@ -8,6 +11,7 @@ import ImageUpload from '@/components/ImageUpload';
 interface Post {
   id: string;
   imageUrl: string;
+  authorId: string;
   authorName: string;
   authorAvatar?: string;
   title?: string;
@@ -26,9 +30,16 @@ interface Supporter {
 }
 
 export default function GalleryPage() {
+  const router = useRouter();
+  const supabase = createClient();
   const [posts, setPosts] = useState<Post[]>([]);
   const [supporters, setSupporters] = useState<Supporter[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [user, setUser] = useState<any>(null);
+  const [userProfile, setUserProfile] = useState<any>(null);
+  const [showRankMode, setShowRankMode] = useState(false);
+  const [rankingDisplayMode, setRankingDisplayMode] = useState<'public' | 'private' | 'hidden'>('public');
+  const [currentAuthorId, setCurrentAuthorId] = useState<string | null>(null);
 
   // 投稿一覧を取得
   const fetchPosts = async () => {
@@ -44,9 +55,26 @@ export default function GalleryPage() {
   };
 
   // サポーターランキングを取得
-  const fetchSupporters = async () => {
+  const fetchSupporters = async (authorId?: string) => {
     try {
-      const response = await fetch('/api/support?type=supporters');
+      if (authorId) {
+        setCurrentAuthorId(authorId);
+        // 特定の作者のランキングを取得する場合、その作者のプロフィール設定を確認
+        const { data: authorProfile } = await supabase
+          .from('profiles')
+          .select('ranking_display_mode')
+          .eq('id', authorId)
+          .single();
+
+        if (authorProfile) {
+          setRankingDisplayMode(authorProfile.ranking_display_mode || 'public');
+        }
+      }
+
+      const url = authorId 
+        ? `/api/support?type=supporters&authorId=${authorId}`
+        : '/api/support?type=supporters';
+      const response = await fetch(url);
       const data = await response.json();
       
       // APIから取得したサポーター情報を使用（プロフィール情報も含まれる）
@@ -57,16 +85,52 @@ export default function GalleryPage() {
   };
 
   useEffect(() => {
-    fetchPosts();
-    fetchSupporters();
-  }, []);
+    // ユーザー認証チェック
+    const checkUser = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+        setUser(user);
+        if (!user) {
+          router.push('/login');
+          return;
+        }
+
+        // 現在のユーザーのプロフィール情報を取得
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('name, show_rank_mode, ranking_display_mode')
+          .eq('id', user.id)
+          .single();
+
+        if (profile) {
+          setUserProfile(profile);
+          setShowRankMode(profile.show_rank_mode || false);
+          setRankingDisplayMode(profile.ranking_display_mode || 'public');
+        } else {
+          setUserProfile({ name: user.email || 'ユーザー' });
+        }
+      };
+
+      checkUser();
+      fetchPosts();
+      fetchSupporters();
+    }, [router, supabase.auth, supabase]);
 
   // 画像アップロード処理
   const handleImageProcessed = async (imageUrl: string) => {
-    const userProfile = localStorage.getItem('userProfile');
-    const profile = userProfile ? JSON.parse(userProfile) : null;
+    if (!user) {
+      alert('ログインが必要です');
+      router.push('/login');
+      return;
+    }
 
     try {
+      // プロフィール情報を取得
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('name, avatar_url')
+        .eq('id', user.id)
+        .single();
+
       const response = await fetch('/api/posts', {
         method: 'POST',
         headers: {
@@ -74,9 +138,9 @@ export default function GalleryPage() {
         },
         body: JSON.stringify({
           imageUrl,
-          authorId: `user_${Date.now()}`,
-          authorName: profile?.name || '匿名アーティスト',
-          authorAvatar: profile?.avatar,
+          authorId: user.id,
+          authorName: profile?.name || user.email || '匿名アーティスト',
+          authorAvatar: profile?.avatar_url,
           title: '新しい作品',
         }),
       });
@@ -85,28 +149,21 @@ export default function GalleryPage() {
       if (data.success) {
         await fetchPosts();
         alert('投稿が完了しました！');
+      } else {
+        throw new Error(data.error);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('投稿エラー:', error);
-      alert('投稿に失敗しました');
+      alert('投稿に失敗しました: ' + (error.message || 'エラーが発生しました'));
     }
   };
 
   // 支援処理
   const handleSupport = async (postId: string, amount: number) => {
-    const userProfile = localStorage.getItem('userProfile');
-    const profile = userProfile ? JSON.parse(userProfile) : null;
-    
-    // ユーザーIDを生成（プロフィールにIDがない場合は作成）
-    let supporterId = profile?.id;
-    if (!supporterId) {
-      // ローカルストレージから既存のIDを取得するか、新規作成
-      let storedId = localStorage.getItem('userId');
-      if (!storedId) {
-        storedId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        localStorage.setItem('userId', storedId);
-      }
-      supporterId = storedId;
+    if (!user) {
+      alert('ログインが必要です');
+      router.push('/login');
+      return;
     }
 
     try {
@@ -117,24 +174,26 @@ export default function GalleryPage() {
         },
         body: JSON.stringify({
           postId,
-          supporterId,
           amount,
-          supporterName: profile?.name,
-          supporterAvatar: profile?.avatar,
-          isAnonymous: profile?.isAnonymous || false,
         }),
       });
 
       const data = await response.json();
       if (data.success) {
-        // ランキングと投稿を更新
-        await fetchSupporters();
+        // 投稿の作者IDを取得してランキングを更新
+        const post = posts.find(p => p.id === postId);
+        if (post && post.authorId) {
+          await fetchSupporters(post.authorId);
+        } else {
+          await fetchSupporters();
+        }
         await fetchPosts();
       } else {
         throw new Error(data.error);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('支援エラー:', error);
+      alert('支援に失敗しました: ' + (error.message || 'エラーが発生しました'));
       throw error;
     }
   };
@@ -154,15 +213,23 @@ export default function GalleryPage() {
               </h1>
             </div>
             <nav className="flex items-center space-x-6">
-              <a href="/" className="text-gray-400 hover:text-white transition-colors">
+              <Link href="/" className="text-gray-400 hover:text-white transition-colors">
                 ホーム
-              </a>
-              <a href="/gallery" className="text-white font-semibold">
+              </Link>
+              <Link href="/gallery" className="text-white font-semibold">
                 ギャラリー
-              </a>
-              <a href="/profile" className="text-gray-400 hover:text-white transition-colors">
+              </Link>
+              <Link href="/dashboard" className="text-gray-400 hover:text-white transition-colors">
+                ダッシュボード
+              </Link>
+              <Link href="/profile" className="text-gray-400 hover:text-white transition-colors">
                 プロフィール
-              </a>
+              </Link>
+              {userProfile && (
+                <span className="text-sm text-gray-300">
+                  {userProfile.name || user?.email}
+                </span>
+              )}
             </nav>
           </div>
         </div>
@@ -207,7 +274,12 @@ export default function GalleryPage() {
           {/* サイドバー */}
           <div className="lg:col-span-1">
             <div className="sticky top-24">
-              <SupporterRanking supporters={supporters} />
+              <SupporterRanking 
+                supporters={supporters} 
+                showRankMode={showRankMode}
+                rankingDisplayMode={rankingDisplayMode}
+                isOwner={currentAuthorId === user?.id}
+              />
             </div>
           </div>
         </div>

@@ -1,32 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
-
-// 仮のデータストア（実際の実装ではデータベースを使用）
-interface SupportRecord {
-  id: string;
-  postId: string;
-  supporterId: string;
-  amount: number;
-  timestamp: Date;
-}
-
-// メモリ内ストレージ（開発用）
-const supportRecords: SupportRecord[] = [];
-const authorEarnings: Record<string, number> = {};
-// ユーザーIDごとの支援額を累積管理
-const supporterTotals: Record<string, number> = {};
-// サポーターのプロフィール情報（名前、アバター、匿名設定）
-const supporterProfiles: Record<string, {
-  name: string;
-  avatar?: string;
-  isAnonymous: boolean;
-}> = {};
+import { createClient } from '@/lib/supabase/server';
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { postId, supporterId, amount, supporterName, supporterAvatar, isAnonymous } = body;
+    const supabase = await createClient();
+    
+    // 認証チェック
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
 
-    if (!postId || !supporterId || !amount) {
+    if (authError || !user) {
+      return NextResponse.json(
+        { error: '認証が必要です' },
+        { status: 401 }
+      );
+    }
+
+    const body = await request.json();
+    const { postId, amount } = body;
+
+    if (!postId || !amount) {
       return NextResponse.json(
         { error: '必要なパラメータが不足しています' },
         { status: 400 }
@@ -46,59 +41,42 @@ export async function POST(request: NextRequest) {
     const platformFee = Math.floor(amount * 0.1);
     const authorEarning = amount - platformFee;
 
-    // 支援記録を作成
-    const supportRecord: SupportRecord = {
-      id: `support_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      postId,
-      supporterId,
-      amount,
-      timestamp: new Date(),
-    };
+    // 投げ銭記録をdonationsテーブルに保存
+    const { data: donationRecord, error: donationError } = await supabase
+      .from('donations')
+      .insert({
+        post_id: postId,
+        supporter_id: user.id,
+        amount,
+        platform_fee: platformFee,
+        author_earning: authorEarning,
+      })
+      .select()
+      .single();
 
-    supportRecords.push(supportRecord);
-
-    // 作者の売上を更新
-    if (!authorEarnings[postId]) {
-      authorEarnings[postId] = 0;
+    if (donationError) {
+      console.error('投げ銭記録保存エラー:', donationError);
+      return NextResponse.json(
+        { error: '投げ銭記録の保存に失敗しました' },
+        { status: 500 }
+      );
     }
-    authorEarnings[postId] += authorEarning;
 
-    // サポーターの合計支援額を累積加算（ユーザーIDごと）
-    if (!supporterTotals[supporterId]) {
-      supporterTotals[supporterId] = 0;
-    }
-    supporterTotals[supporterId] += amount; // 累積加算
-
-    // サポーターのプロフィール情報を更新（初回または更新時）
-    if (supporterName !== undefined || supporterAvatar !== undefined || isAnonymous !== undefined) {
-      if (!supporterProfiles[supporterId]) {
-        supporterProfiles[supporterId] = {
-          name: supporterName || `ユーザー${supporterId.slice(-4)}`,
-          avatar: supporterAvatar,
-          isAnonymous: isAnonymous || false,
-        };
-      } else {
-        // 既存のプロフィールを更新（提供された値のみ）
-        if (supporterName !== undefined) {
-          supporterProfiles[supporterId].name = supporterName;
-        }
-        if (supporterAvatar !== undefined) {
-          supporterProfiles[supporterId].avatar = supporterAvatar;
-        }
-        if (isAnonymous !== undefined) {
-          supporterProfiles[supporterId].isAnonymous = isAnonymous;
-        }
-      }
-    }
+    // サポーターの合計支援額を取得
+    const { data: supporterTotal } = await supabase
+      .from('supporter_totals')
+      .select('total_amount')
+      .eq('supporter_id', user.id)
+      .single();
 
     return NextResponse.json({
       success: true,
-      supportId: supportRecord.id,
+      donationId: donationRecord.id,
       amount,
       platformFee,
       authorEarning,
-      totalSupport: supporterTotals[supporterId],
-      message: '支援が完了しました',
+      totalSupport: supporterTotal?.total_amount || amount,
+      message: '投げ銭が完了しました',
     });
   } catch (error) {
     console.error('支援処理エラー:', error);
@@ -111,55 +89,85 @@ export async function POST(request: NextRequest) {
 
 // 作者の売上を取得
 export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-  const postId = searchParams.get('postId');
-  const type = searchParams.get('type');
+  try {
+    const supabase = await createClient();
+    const { searchParams } = new URL(request.url);
+    const postId = searchParams.get('postId');
+    const type = searchParams.get('type');
+    const authorId = searchParams.get('authorId'); // 作者ID（ランキング公開設定用）
 
-  if (type === 'author' && postId) {
-    // 作者の売上を取得
-    const earnings = authorEarnings[postId] || 0;
-    return NextResponse.json({ earnings });
-  }
+    if (type === 'author' && postId) {
+      // 作者の売上を取得
+      const { data: earnings } = await supabase
+        .from('author_earnings')
+        .select('total_earning')
+        .eq('post_id', postId)
+        .single();
+
+      return NextResponse.json({ earnings: earnings?.total_earning || 0 });
+    }
 
   if (type === 'supporters') {
-    // サポーターランキングを取得（ユーザーIDごとに統合）
-    const supportersMap = new Map<string, {
-      id: string;
-      totalAmount: number;
-      name: string;
-      avatar?: string;
-      isAnonymous: boolean;
-    }>();
+    // サポーターランキングを取得
+    // 作者IDが指定されている場合、ranking_display_modeを確認
+    if (authorId) {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('ranking_display_mode, show_rank_mode')
+        .eq('id', authorId)
+        .single();
 
-    // サポーターごとの合計金額を計算（既に累積されているが、念のため再集計）
-    Object.entries(supporterTotals).forEach(([supporterId, totalAmount]) => {
-      const profile = supporterProfiles[supporterId] || {
-        name: `ユーザー${supporterId.slice(-4)}`,
-        avatar: undefined,
-        isAnonymous: false,
-      };
+      // ranking_display_modeがhiddenの場合、空の配列を返す
+      // privateの場合は、リクエストしたユーザーが所有者かどうかをフロントエンドで判断
+      if (profile && profile.ranking_display_mode === 'hidden') {
+        return NextResponse.json({ supporters: [], rankingDisplayMode: 'hidden' });
+      }
+    }
 
-      // 同じユーザーIDは1つのエントリに統合
-      supportersMap.set(supporterId, {
-        id: supporterId,
-        totalAmount, // 既に累積された値
-        name: profile.name,
-        avatar: profile.avatar,
-        isAnonymous: profile.isAnonymous,
+      // サポーター合計を取得してランキングを作成
+      const { data: supporterTotals, error } = await supabase
+        .from('supporter_totals')
+        .select(`
+          supporter_id,
+          total_amount,
+          profiles!supporter_totals_supporter_id_fkey (
+            name,
+            avatar_url,
+            is_anonymous
+          )
+        `)
+        .order('total_amount', { ascending: false })
+        .limit(10);
+
+      if (error) {
+        console.error('ランキング取得エラー:', error);
+        return NextResponse.json(
+          { error: 'ランキングの取得に失敗しました' },
+          { status: 500 }
+        );
+      }
+
+      const supporters = (supporterTotals || []).map((item, index) => {
+        const profile = item.profiles as any;
+        return {
+          id: item.supporter_id,
+          totalAmount: item.total_amount,
+          name: profile?.name || `ユーザー${item.supporter_id.slice(-4)}`,
+          avatar: profile?.avatar_url,
+          isAnonymous: profile?.is_anonymous || false,
+          rank: index + 1,
+        };
       });
-    });
 
-    // 合計金額が高い順にソートしてトップ10を取得
-    const supporters = Array.from(supportersMap.values())
-      .sort((a, b) => b.totalAmount - a.totalAmount) // 降順ソート
-      .slice(0, 10) // トップ10
-      .map((supporter, index) => ({
-        ...supporter,
-        rank: index + 1,
-      }));
+      return NextResponse.json({ supporters });
+    }
 
-    return NextResponse.json({ supporters });
+    return NextResponse.json({ error: '無効なリクエスト' }, { status: 400 });
+  } catch (error) {
+    console.error('GETエラー:', error);
+    return NextResponse.json(
+      { error: 'リクエスト処理に失敗しました' },
+      { status: 500 }
+    );
   }
-
-  return NextResponse.json({ error: '無効なリクエスト' }, { status: 400 });
 }
