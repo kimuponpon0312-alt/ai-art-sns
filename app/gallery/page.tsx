@@ -49,18 +49,8 @@ export default function GalleryPage() {
       const response = await fetch('/api/support?type=supporters');
       const data = await response.json();
       
-      // プロフィール情報を取得（実際の実装ではAPIから取得）
-      const userProfile = localStorage.getItem('userProfile');
-      const profile = userProfile ? JSON.parse(userProfile) : null;
-
-      const supportersWithProfile: Supporter[] = (data.supporters || []).map((s: any) => ({
-        ...s,
-        name: profile?.name || `ユーザー${s.id.slice(-4)}`,
-        avatar: profile?.avatar,
-        isAnonymous: profile?.isAnonymous || false,
-      }));
-
-      setSupporters(supportersWithProfile);
+      // APIから取得したサポーター情報を使用（プロフィール情報も含まれる）
+      setSupporters(data.supporters || []);
     } catch (error) {
       console.error('ランキング取得エラー:', error);
     }
@@ -106,6 +96,18 @@ export default function GalleryPage() {
   const handleSupport = async (postId: string, amount: number) => {
     const userProfile = localStorage.getItem('userProfile');
     const profile = userProfile ? JSON.parse(userProfile) : null;
+    
+    // ユーザーIDを生成（プロフィールにIDがない場合は作成）
+    let supporterId = profile?.id;
+    if (!supporterId) {
+      // ローカルストレージから既存のIDを取得するか、新規作成
+      let storedId = localStorage.getItem('userId');
+      if (!storedId) {
+        storedId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        localStorage.setItem('userId', storedId);
+      }
+      supporterId = storedId;
+    }
 
     try {
       const response = await fetch('/api/support', {
@@ -115,13 +117,17 @@ export default function GalleryPage() {
         },
         body: JSON.stringify({
           postId,
-          supporterId: profile?.id || `user_${Date.now()}`,
+          supporterId,
           amount,
+          supporterName: profile?.name,
+          supporterAvatar: profile?.avatar,
+          isAnonymous: profile?.isAnonymous || false,
         }),
       });
 
       const data = await response.json();
       if (data.success) {
+        // ランキングと投稿を更新
         await fetchSupporters();
         await fetchPosts();
       } else {

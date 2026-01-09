@@ -1,15 +1,38 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 export default function ProfilePage() {
   const [isAnonymous, setIsAnonymous] = useState(false);
   const [name, setName] = useState('');
   const [avatar, setAvatar] = useState('');
 
+  // 既存のプロフィールを読み込み
+  useEffect(() => {
+    const savedProfile = localStorage.getItem('userProfile');
+    if (savedProfile) {
+      try {
+        const profile = JSON.parse(savedProfile);
+        setName(profile.name || '');
+        setAvatar(profile.avatar || '');
+        setIsAnonymous(profile.isAnonymous || false);
+      } catch (error) {
+        console.error('プロフィール読み込みエラー:', error);
+      }
+    }
+  }, []);
+
   const handleSave = async () => {
+    // ユーザーIDを取得または生成
+    let userId = localStorage.getItem('userId');
+    if (!userId) {
+      userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      localStorage.setItem('userId', userId);
+    }
+
     // プロフィール設定を保存（実際の実装ではAPIを呼び出す）
     const profile = {
+      id: userId,
       name,
       avatar,
       isAnonymous,

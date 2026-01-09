@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import TiledImage from './TiledImage';
 
 interface Post {
   id: string;
@@ -39,12 +40,12 @@ export default function PostCard({ post, onSupport }: PostCardProps) {
 
   return (
     <div className="bg-gray-800 rounded-2xl overflow-hidden shadow-xl hover:shadow-2xl transition-all border border-gray-700">
-      {/* 画像 */}
-      <div className="relative w-full aspect-square bg-gray-900">
-        <img
-          src={post.imageUrl}
+      {/* 画像（タイル表示・右クリック禁止） */}
+      <div className="relative w-full aspect-square bg-gray-900" data-protected-image="true">
+        <TiledImage
+          imageUrl={post.imageUrl}
           alt={post.title || '作品'}
-          className="w-full h-full object-contain"
+          tileSize={200}
         />
       </div>
 

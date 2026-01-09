@@ -35,17 +35,60 @@ export default function ImageUpload({ onImageProcessed }: ImageUploadProps) {
           // 画像を描画
           ctx.drawImage(img, 0, 0);
 
-          // 微細なノイズを追加
+          // Glaze風の処理: ピクセルごとにランダムな色情報のオフセットを追加
           const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
           const data = imageData.data;
+          const width = canvas.width;
+          const height = canvas.height;
 
-          // ランダムノイズを追加（非常に微細）
-          for (let i = 0; i < data.length; i += 4) {
-            // RGBチャンネルに微細なノイズを追加
-            const noise = (Math.random() - 0.5) * 2; // -1 から 1 の範囲
-            data[i] = Math.max(0, Math.min(255, data[i] + noise));     // R
-            data[i + 1] = Math.max(0, Math.min(255, data[i + 1] + noise)); // G
-            data[i + 2] = Math.max(0, Math.min(255, data[i + 2] + noise)); // B
+          // パラメータ: Glaze風の強度調整
+          const intensity = 0.03; // オフセット強度（3%）
+          const styleProtectionFactor = 0.05; // スタイル保護ファクター
+
+          // ピクセルごとに処理
+          for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+              const idx = (y * width + x) * 4;
+              
+              // 現在のピクセル位置から微細なランダムオフセットを生成
+              // 近傍ピクセルの影響を受けたオフセット（スタイル抽出を困難にする）
+              const offsetX = (Math.random() - 0.5) * styleProtectionFactor;
+              const offsetY = (Math.random() - 0.5) * styleProtectionFactor;
+              
+              // 周囲のピクセルから色情報をサンプリング（微細なズレ）
+              const sampleX = Math.max(0, Math.min(width - 1, x + Math.floor(offsetX * 5)));
+              const sampleY = Math.max(0, Math.min(height - 1, y + Math.floor(offsetY * 5)));
+              const sampleIdx = (sampleY * width + sampleX) * 4;
+              
+              // RGBチャンネルごとに異なるオフセットを適用
+              // 各チャンネルに数学的に複雑な変換を適用
+              const rOffset = (Math.random() - 0.5) * intensity * 255;
+              const gOffset = (Math.random() - 0.5) * intensity * 255;
+              const bOffset = (Math.random() - 0.5) * intensity * 255;
+              
+              // 元のピクセル値とサンプル値の混合（スタイル保護）
+              const blendFactor = 0.7; // 元の値を70%保持
+              const r = data[idx] * blendFactor + data[sampleIdx] * (1 - blendFactor);
+              const g = data[idx + 1] * blendFactor + data[sampleIdx + 1] * (1 - blendFactor);
+              const b = data[idx + 2] * blendFactor + data[sampleIdx + 2] * (1 - blendFactor);
+              
+              // オフセットを適用
+              data[idx] = Math.max(0, Math.min(255, r + rOffset));     // R
+              data[idx + 1] = Math.max(0, Math.min(255, g + gOffset)); // G
+              data[idx + 2] = Math.max(0, Math.min(255, b + bOffset)); // B
+              
+              // 追加の非線形変換（AIの特徴抽出をさらに困難にする）
+              // 微細な非線形マッピング
+              const nonlinear = (val: number) => {
+                const normalized = val / 255;
+                const transformed = normalized + (Math.random() - 0.5) * intensity * 0.1;
+                return Math.max(0, Math.min(255, transformed * 255));
+              };
+              
+              data[idx] = nonlinear(data[idx]);
+              data[idx + 1] = nonlinear(data[idx + 1]);
+              data[idx + 2] = nonlinear(data[idx + 2]);
+            }
           }
 
           ctx.putImageData(imageData, 0, 0);

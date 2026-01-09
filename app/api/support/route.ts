@@ -12,12 +12,19 @@ interface SupportRecord {
 // メモリ内ストレージ（開発用）
 const supportRecords: SupportRecord[] = [];
 const authorEarnings: Record<string, number> = {};
+// ユーザーIDごとの支援額を累積管理
 const supporterTotals: Record<string, number> = {};
+// サポーターのプロフィール情報（名前、アバター、匿名設定）
+const supporterProfiles: Record<string, {
+  name: string;
+  avatar?: string;
+  isAnonymous: boolean;
+}> = {};
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { postId, supporterId, amount } = body;
+    const { postId, supporterId, amount, supporterName, supporterAvatar, isAnonymous } = body;
 
     if (!postId || !supporterId || !amount) {
       return NextResponse.json(
@@ -56,11 +63,33 @@ export async function POST(request: NextRequest) {
     }
     authorEarnings[postId] += authorEarning;
 
-    // サポーターの合計支援額を更新
+    // サポーターの合計支援額を累積加算（ユーザーIDごと）
     if (!supporterTotals[supporterId]) {
       supporterTotals[supporterId] = 0;
     }
-    supporterTotals[supporterId] += amount;
+    supporterTotals[supporterId] += amount; // 累積加算
+
+    // サポーターのプロフィール情報を更新（初回または更新時）
+    if (supporterName !== undefined || supporterAvatar !== undefined || isAnonymous !== undefined) {
+      if (!supporterProfiles[supporterId]) {
+        supporterProfiles[supporterId] = {
+          name: supporterName || `ユーザー${supporterId.slice(-4)}`,
+          avatar: supporterAvatar,
+          isAnonymous: isAnonymous || false,
+        };
+      } else {
+        // 既存のプロフィールを更新（提供された値のみ）
+        if (supporterName !== undefined) {
+          supporterProfiles[supporterId].name = supporterName;
+        }
+        if (supporterAvatar !== undefined) {
+          supporterProfiles[supporterId].avatar = supporterAvatar;
+        }
+        if (isAnonymous !== undefined) {
+          supporterProfiles[supporterId].isAnonymous = isAnonymous;
+        }
+      }
+    }
 
     return NextResponse.json({
       success: true,
@@ -68,6 +97,7 @@ export async function POST(request: NextRequest) {
       amount,
       platformFee,
       authorEarning,
+      totalSupport: supporterTotals[supporterId],
       message: '支援が完了しました',
     });
   } catch (error) {
@@ -92,14 +122,37 @@ export async function GET(request: NextRequest) {
   }
 
   if (type === 'supporters') {
-    // サポーターランキングを取得
-    const supporters = Object.entries(supporterTotals)
-      .map(([supporterId, totalAmount]) => ({
+    // サポーターランキングを取得（ユーザーIDごとに統合）
+    const supportersMap = new Map<string, {
+      id: string;
+      totalAmount: number;
+      name: string;
+      avatar?: string;
+      isAnonymous: boolean;
+    }>();
+
+    // サポーターごとの合計金額を計算（既に累積されているが、念のため再集計）
+    Object.entries(supporterTotals).forEach(([supporterId, totalAmount]) => {
+      const profile = supporterProfiles[supporterId] || {
+        name: `ユーザー${supporterId.slice(-4)}`,
+        avatar: undefined,
+        isAnonymous: false,
+      };
+
+      // 同じユーザーIDは1つのエントリに統合
+      supportersMap.set(supporterId, {
         id: supporterId,
-        totalAmount,
-      }))
-      .sort((a, b) => b.totalAmount - a.totalAmount)
-      .slice(0, 10)
+        totalAmount, // 既に累積された値
+        name: profile.name,
+        avatar: profile.avatar,
+        isAnonymous: profile.isAnonymous,
+      });
+    });
+
+    // 合計金額が高い順にソートしてトップ10を取得
+    const supporters = Array.from(supportersMap.values())
+      .sort((a, b) => b.totalAmount - a.totalAmount) // 降順ソート
+      .slice(0, 10) // トップ10
       .map((supporter, index) => ({
         ...supporter,
         rank: index + 1,
