@@ -19,7 +19,7 @@ interface DashboardData {
       id: string;
       title: string;
       image_url: string;
-    };
+    } | null;
     supporter: {
       id: string;
       name: string;
@@ -43,28 +43,25 @@ export default function DashboardPage() {
   const [profile, setProfile] = useState<any>(null);
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [protectionStatus, setProtectionStatus] = useState<'active' | 'inactive'>('active');
 
   useEffect(() => {
     const loadDashboard = async () => {
       try {
-        // ユーザー認証チェック
         const { data: { user }, error: userError } = await supabase.auth.getUser();
         if (userError || !user) {
-          router.push('/login');
+          router.push('/');
           return;
         }
         setUser(user);
 
-        // プロフィール情報を取得
-        const { data: profileData, error: profileError } = await supabase
+        const { data: profileData } = await supabase
           .from('profiles')
           .select('*')
           .eq('id', user.id)
           .single();
 
-        if (profileError && profileError.code !== 'PGRST116') {
-          console.error('プロフィール取得エラー:', profileError);
-        } else {
+        if (profileData) {
           setProfile(profileData);
         }
 
@@ -77,7 +74,15 @@ export default function DashboardPage() {
 
         if (postsError) {
           console.error('投稿取得エラー:', postsError);
+          setLoading(false);
           return;
+        }
+
+        // 投稿があるかどうかで保護ステータスを判定
+        if (posts && posts.length > 0) {
+          setProtectionStatus('active');
+        } else {
+          setProtectionStatus('inactive');
         }
 
         // 各投稿の売上を取得
@@ -117,7 +122,6 @@ export default function DashboardPage() {
             .limit(50);
 
           if (!donationsError && donationsData) {
-            // サポーター情報を取得
             donations = await Promise.all(
               donationsData.map(async (donation) => {
                 const { data: supporter } = await supabase
@@ -149,7 +153,6 @@ export default function DashboardPage() {
           }
         }
 
-        // 合計を計算
         const totalEarnings = postsWithEarnings.reduce((sum, post) => sum + post.earnings, 0);
         const totalDonations = donations.reduce((sum, d) => sum + d.amount, 0);
 
@@ -213,6 +216,31 @@ export default function DashboardPage() {
           {profile?.name || user.email} のダッシュボード
         </h2>
 
+        {/* 守護ステータス */}
+        <div className="bg-gray-800 rounded-2xl p-8 mb-8 border border-gray-700">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-2xl font-bold text-white mb-2">守護ステータス</h3>
+              <div className="flex items-center space-x-3">
+                <div className={`w-4 h-4 rounded-full ${protectionStatus === 'active' ? 'bg-green-500' : 'bg-gray-500'} animate-pulse`}></div>
+                <p className={`text-xl font-semibold ${protectionStatus === 'active' ? 'text-green-400' : 'text-gray-400'}`}>
+                  {protectionStatus === 'active' 
+                    ? 'あなたの画像は現在AIから保護されています（Active）'
+                    : '保護された画像がありません'}
+                </p>
+              </div>
+              <p className="text-gray-400 mt-2 text-sm">
+                {protectionStatus === 'active'
+                  ? 'アップロードされたすべての画像にAI防御処理が適用されています'
+                  : '作品を投稿すると、自動的にAI防御処理が適用されます'}
+              </p>
+            </div>
+            {protectionStatus === 'active' && (
+              <div className="text-6xl">🛡️</div>
+            )}
+          </div>
+        </div>
+
         {/* 統計カード */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700">
@@ -244,13 +272,11 @@ export default function DashboardPage() {
         </div>
 
         {/* 投稿一覧と売上 */}
-        <div className="bg-gray-800 rounded-2xl p-6 mb-8 border border-gray-700">
-          <h3 className="text-xl font-bold mb-4">投稿別売上</h3>
-          {dashboardData?.posts.length === 0 ? (
-            <p className="text-gray-400 text-center py-8">まだ投稿がありません</p>
-          ) : (
+        {dashboardData && dashboardData.posts.length > 0 && (
+          <div className="bg-gray-800 rounded-2xl p-6 mb-8 border border-gray-700">
+            <h3 className="text-xl font-bold mb-4">投稿別売上</h3>
             <div className="space-y-4">
-              {dashboardData?.posts.map((post) => (
+              {dashboardData.posts.map((post) => (
                 <div
                   key={post.id}
                   className="flex items-center space-x-4 p-4 bg-gray-700/50 rounded-lg"
@@ -275,17 +301,15 @@ export default function DashboardPage() {
                 </div>
               ))}
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
         {/* 投げ銭履歴 */}
-        <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700">
-          <h3 className="text-xl font-bold mb-4">投げ銭履歴</h3>
-          {dashboardData?.donations.length === 0 ? (
-            <p className="text-gray-400 text-center py-8">まだ投げ銭がありません</p>
-          ) : (
+        {dashboardData && dashboardData.donations.length > 0 && (
+          <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+            <h3 className="text-xl font-bold mb-4">投げ銭履歴</h3>
             <div className="space-y-3">
-              {dashboardData?.donations.map((donation) => (
+              {dashboardData.donations.map((donation) => (
                 <div
                   key={donation.id}
                   className="flex items-center justify-between p-4 bg-gray-700/50 rounded-lg"
@@ -330,8 +354,20 @@ export default function DashboardPage() {
                 </div>
               ))}
             </div>
-          )}
-        </div>
+          </div>
+        )}
+
+        {(!dashboardData || dashboardData.postsCount === 0) && (
+          <div className="bg-gray-800 rounded-2xl p-8 border border-gray-700 text-center">
+            <p className="text-gray-400 mb-4">まだ投稿がありません</p>
+            <Link
+              href="/gallery"
+              className="inline-block px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all font-semibold"
+            >
+              作品を投稿する
+            </Link>
+          </div>
+        )}
       </div>
     </div>
   );

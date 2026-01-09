@@ -93,10 +93,8 @@ export async function GET(request: NextRequest) {
     const supabase = await createClient();
     const { searchParams } = new URL(request.url);
     const postId = searchParams.get('postId');
-    const type = searchParams.get('type');
-    const authorId = searchParams.get('authorId'); // 作者ID（ランキング公開設定用）
 
-    if (type === 'author' && postId) {
+    if (postId) {
       // 作者の売上を取得
       const { data: earnings } = await supabase
         .from('author_earnings')
@@ -105,61 +103,6 @@ export async function GET(request: NextRequest) {
         .single();
 
       return NextResponse.json({ earnings: earnings?.total_earning || 0 });
-    }
-
-  if (type === 'supporters') {
-    // サポーターランキングを取得
-    // 作者IDが指定されている場合、ranking_display_modeを確認
-    if (authorId) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('ranking_display_mode, show_rank_mode')
-        .eq('id', authorId)
-        .single();
-
-      // ranking_display_modeがhiddenの場合、空の配列を返す
-      // privateの場合は、リクエストしたユーザーが所有者かどうかをフロントエンドで判断
-      if (profile && profile.ranking_display_mode === 'hidden') {
-        return NextResponse.json({ supporters: [], rankingDisplayMode: 'hidden' });
-      }
-    }
-
-      // サポーター合計を取得してランキングを作成
-      const { data: supporterTotals, error } = await supabase
-        .from('supporter_totals')
-        .select(`
-          supporter_id,
-          total_amount,
-          profiles!supporter_totals_supporter_id_fkey (
-            name,
-            avatar_url,
-            is_anonymous
-          )
-        `)
-        .order('total_amount', { ascending: false })
-        .limit(10);
-
-      if (error) {
-        console.error('ランキング取得エラー:', error);
-        return NextResponse.json(
-          { error: 'ランキングの取得に失敗しました' },
-          { status: 500 }
-        );
-      }
-
-      const supporters = (supporterTotals || []).map((item, index) => {
-        const profile = item.profiles as any;
-        return {
-          id: item.supporter_id,
-          totalAmount: item.total_amount,
-          name: profile?.name || `ユーザー${item.supporter_id.slice(-4)}`,
-          avatar: profile?.avatar_url,
-          isAnonymous: profile?.is_anonymous || false,
-          rank: index + 1,
-        };
-      });
-
-      return NextResponse.json({ supporters });
     }
 
     return NextResponse.json({ error: '無効なリクエスト' }, { status: 400 });

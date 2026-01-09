@@ -4,24 +4,25 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import AuthModal from '@/components/AuthModal';
 
 export default function Home() {
   const router = useRouter();
   const supabase = createClient();
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isSignUp, setIsSignUp] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [user, setUser] = useState<any>(null);
   const [profile, setProfile] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
 
   useEffect(() => {
-    // ユーザー認証状態を確認
     const checkAuth = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       setUser(user);
 
       if (user) {
-        // プロフィール情報を取得
         const { data: profileData } = await supabase
           .from('profiles')
           .select('name')
@@ -29,16 +30,11 @@ export default function Home() {
           .single();
         setProfile(profileData);
       }
-
-      setLoading(false);
     };
 
     checkAuth();
 
-    // 認証状態の変更を監視
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setUser(session?.user ?? null);
       if (session?.user) {
         const { data: profileData } = await supabase
@@ -47,14 +43,125 @@ export default function Home() {
           .eq('id', session.user.id)
           .single();
         setProfile(profileData);
+        router.refresh();
       } else {
         setProfile(null);
       }
-      router.refresh();
     });
 
     return () => subscription.unsubscribe();
   }, [router, supabase]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+
+    try {
+      if (isSignUp) {
+        // 新規登録（メール認証不要）
+        const { data, error: signUpError } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            emailRedirectTo: `${window.location.origin}/`,
+            data: {
+              name: email.split('@')[0],
+            },
+          },
+        });
+
+        if (signUpError) {
+          // エラーメッセージを日本語化（必ず理由を表示）
+          let errorMessage = '登録に失敗しました';
+          const msg = signUpError.message.toLowerCase();
+          
+          if (msg.includes('password') || msg.includes('length')) {
+            errorMessage = 'パスワードは6文字以上で入力してください';
+          } else if (msg.includes('email') || msg.includes('invalid')) {
+            errorMessage = '正しいメールアドレスを入力してください';
+          } else if (msg.includes('already registered') || msg.includes('already exists') || msg.includes('user already')) {
+            errorMessage = 'このメールアドレスは既に登録されています。ログインしてください。';
+          } else if (msg.includes('too many')) {
+            errorMessage = 'リクエストが多すぎます。しばらく待ってから再度お試しください。';
+          } else if (signUpError.message) {
+            errorMessage = `登録に失敗しました: ${signUpError.message}`;
+          }
+          
+          setError(errorMessage);
+          setLoading(false);
+          return;
+        }
+
+        if (data.user) {
+          // プロフィール作成
+          const { error: profileError } = await supabase
+            .from('profiles')
+            .upsert({
+              id: data.user.id,
+              name: email.split('@')[0],
+            }, {
+              onConflict: 'id',
+            });
+
+          if (profileError) {
+            console.error('プロフィール作成エラー:', profileError);
+          }
+
+          // セッションを確認（メール認証不要の場合、セッションが即座に作成される）
+          const { data: { session } } = await supabase.auth.getSession();
+          
+          if (session) {
+            // 登録成功後、自動的にログイン状態になるので、トップページにリダイレクト
+            setShowForm(false);
+            setEmail('');
+            setPassword('');
+            router.refresh();
+          } else {
+            // メール確認が必要な場合（Supabaseの設定により異なる）
+            setError('確認メールを送信しました。メール内のリンクをクリックしてアカウントを有効化してください。');
+            setEmail('');
+            setPassword('');
+          }
+        } else {
+          setError('ユーザー作成に失敗しました。もう一度お試しください。');
+          setLoading(false);
+        }
+      } else {
+        // ログイン
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+
+        if (signInError) {
+          // エラーメッセージを日本語化（わかりやすく表示）
+          let errorMessage = 'ログインに失敗しました';
+          if (signInError.message.includes('Invalid login credentials') || signInError.message.includes('invalid')) {
+            errorMessage = 'メールアドレスまたはパスワードが正しくありません';
+          } else if (signInError.message.includes('Email not confirmed') || signInError.message.includes('not confirmed')) {
+            errorMessage = 'メールアドレスの確認が完了していません。メールを確認してください。';
+          } else if (signInError.message.includes('Password')) {
+            errorMessage = 'パスワードが正しくありません';
+          } else if (signInError.message.includes('User not found')) {
+            errorMessage = 'このメールアドレスは登録されていません。新規登録してください。';
+          } else if (signInError.message) {
+            errorMessage = `ログインに失敗しました: ${signInError.message}`;
+          }
+          setError(errorMessage);
+        } else {
+          setShowForm(false);
+          setEmail('');
+          setPassword('');
+          router.refresh();
+        }
+      }
+    } catch (err: any) {
+      setError(err.message || 'エラーが発生しました');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
@@ -63,12 +170,6 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gray-900 text-white">
-      {/* 認証モーダル */}
-      <AuthModal
-        isOpen={isAuthModalOpen}
-        onClose={() => setIsAuthModalOpen(false)}
-      />
-
       {/* ヘッダー */}
       <header className="sticky top-0 z-50 bg-gray-900/95 backdrop-blur-md border-b border-gray-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -100,34 +201,33 @@ export default function Home() {
               )}
             </nav>
             <div className="flex items-center space-x-4">
-              {!loading && (
+              {user ? (
                 <>
-                  {user ? (
-                    <>
-                      <Link
-                        href="/gallery"
-                        className="px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all shadow-lg hover:shadow-xl font-semibold"
-                      >
-                        投稿する
-                      </Link>
-                      <button
-                        onClick={handleSignOut}
-                        className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors font-semibold"
-                      >
-                        ログアウト
-                      </button>
-                      {profile?.name && (
-                        <span className="text-sm text-gray-300 hidden md:inline">
-                          {profile.name}
-                        </span>
-                      )}
-                    </>
-                  ) : (
-                    <Link href="/gallery" className="px-6 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">
-                      ギャラリーを見る
-                    </Link>
+                  <Link
+                    href="/gallery"
+                    className="px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all shadow-lg hover:shadow-xl font-semibold"
+                  >
+                    投稿する
+                  </Link>
+                  <button
+                    onClick={handleSignOut}
+                    className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors font-semibold"
+                  >
+                    ログアウト
+                  </button>
+                  {profile?.name && (
+                    <span className="text-sm text-gray-300 hidden md:inline">
+                      {profile.name}
+                    </span>
                   )}
                 </>
+              ) : (
+                <button
+                  onClick={() => setShowForm(true)}
+                  className="px-6 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all shadow-lg hover:shadow-xl font-semibold"
+                >
+                  今すぐ始める
+                </button>
               )}
             </div>
           </div>
@@ -152,16 +252,112 @@ export default function Home() {
                   投稿する
                 </Link>
               ) : (
-                <button
-                  onClick={() => setIsAuthModalOpen(true)}
-                  className="px-8 py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl hover:from-purple-700 hover:to-pink-700 transition-all shadow-lg hover:shadow-2xl text-lg font-semibold"
-                >
-                  今すぐ始める
-                </button>
+                <>
+                  {!showForm ? (
+                    <button
+                      onClick={() => setShowForm(true)}
+                      className="px-8 py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl hover:from-purple-700 hover:to-pink-700 transition-all shadow-lg hover:shadow-2xl text-lg font-semibold"
+                    >
+                      今すぐ始める
+                    </button>
+                  ) : (
+                    <div className="w-full max-w-md mx-auto bg-gray-800 rounded-2xl p-6 border border-gray-700">
+                      <h3 className="text-xl font-bold text-white mb-4 text-center">
+                        {isSignUp ? '新規登録' : 'ログイン'}
+                      </h3>
+
+                      {error && (
+                        <div className="mb-4 p-3 bg-red-900/50 border-2 border-red-600 rounded-lg">
+                          <p className="text-red-200 text-sm font-semibold">{error}</p>
+                        </div>
+                      )}
+
+                      <form onSubmit={handleSubmit} className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-semibold text-gray-300 mb-2">
+                            メールアドレス
+                          </label>
+                          <input
+                            type="email"
+                            value={email}
+                            onChange={(e) => {
+                              setEmail(e.target.value);
+                              setError(null);
+                            }}
+                            required
+                            disabled={loading}
+                            className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50"
+                            placeholder="example@email.com"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-semibold text-gray-300 mb-2">
+                            パスワード
+                          </label>
+                          <input
+                            type="password"
+                            value={password}
+                            onChange={(e) => {
+                              setPassword(e.target.value);
+                              setError(null);
+                            }}
+                            required
+                            minLength={6}
+                            disabled={loading}
+                            className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50"
+                            placeholder="6文字以上"
+                          />
+                          {isSignUp && (
+                            <p className="mt-1 text-xs text-gray-400">パスワードは6文字以上で入力してください</p>
+                          )}
+                        </div>
+
+                        <button
+                          type="submit"
+                          disabled={loading}
+                          className="w-full px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {loading ? '処理中...' : isSignUp ? 'アカウントを作成' : 'ログイン'}
+                        </button>
+                      </form>
+
+                      <div className="mt-4 text-center">
+                        <button
+                          onClick={() => {
+                            setIsSignUp(!isSignUp);
+                            setError(null);
+                          }}
+                          disabled={loading}
+                          className="text-sm text-gray-400 hover:text-white transition-colors disabled:opacity-50"
+                        >
+                          {isSignUp
+                            ? 'すでにアカウントをお持ちですか？ログイン'
+                            : 'アカウントをお持ちでない方はこちら'}
+                        </button>
+                      </div>
+
+                      <div className="mt-4 text-center">
+                        <button
+                          onClick={() => {
+                            setShowForm(false);
+                            setError(null);
+                            setEmail('');
+                            setPassword('');
+                          }}
+                          disabled={loading}
+                          className="text-sm text-gray-400 hover:text-white transition-colors disabled:opacity-50"
+                        >
+                          閉じる
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  <Link href="/gallery" className="px-8 py-4 bg-gray-800 text-white rounded-xl hover:bg-gray-700 transition-all shadow-lg border-2 border-gray-700 text-lg font-semibold text-center">
+                    ギャラリーを見る
+                  </Link>
+                </>
               )}
-              <Link href="/gallery" className="px-8 py-4 bg-gray-800 text-white rounded-xl hover:bg-gray-700 transition-all shadow-lg border-2 border-gray-700 text-lg font-semibold text-center">
-                ギャラリーを見る
-              </Link>
             </div>
           </div>
         </section>
@@ -192,7 +388,7 @@ export default function Home() {
               </div>
               <h4 className="text-xl font-bold mb-4 text-white">直接収益化</h4>
               <p className="text-gray-400">
-                投げ銭機能（100円/500円/1000円）で作品への直接支援が可能。月間サポーターランキングで競い合えます。
+                投げ銭機能（100円/500円/1000円）で作品への直接支援が可能です。
               </p>
             </div>
 
@@ -202,9 +398,9 @@ export default function Home() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                 </svg>
               </div>
-              <h4 className="text-xl font-bold mb-4 text-white">匿名/公開選択</h4>
+              <h4 className="text-xl font-bold mb-4 text-white">作品保護</h4>
               <p className="text-gray-400">
-                プロフィール設定でランキングでの匿名表示を選択可能。支援額は集計され、ランキング争いを加速させます。
+                あなたの作品は自動的にAI学習から保護されます。
               </p>
             </div>
           </div>
@@ -225,7 +421,7 @@ export default function Home() {
               </Link>
             ) : (
               <button
-                onClick={() => setIsAuthModalOpen(true)}
+                onClick={() => setShowForm(true)}
                 className="px-8 py-4 bg-white text-purple-600 rounded-xl hover:bg-gray-100 transition-all shadow-lg hover:shadow-2xl text-lg font-semibold"
               >
                 今すぐ始める

@@ -18,14 +18,13 @@ export async function GET(request: Request) {
         .eq('id', data.user.id)
         .single();
       
-      if (!profile && !profileError) {
+      if (!profile) {
         // プロフィールが存在しない場合は作成
         const { error: insertError } = await supabase
           .from('profiles')
           .insert({
             id: data.user.id,
             name: data.user.user_metadata?.name || data.user.email?.split('@')[0] || 'ユーザー',
-            ranking_display_mode: 'public',
           });
         
         if (insertError) {
@@ -35,6 +34,6 @@ export async function GET(request: Request) {
     }
   }
 
-  // ギャラリーページにリダイレクト
-  return NextResponse.redirect(`${origin}/gallery`);
+  // トップページにリダイレクト
+  return NextResponse.redirect(`${origin}/`);
 }
