@@ -124,11 +124,7 @@ export default function TiledImage({ imageUrl, alt, tileSize = 200 }: TiledImage
     return false;
   };
 
-  // 選択禁止
-  const handleSelectStart = (e: React.SyntheticEvent) => {
-    e.preventDefault();
-    return false;
-  };
+  // 選択禁止はCSSで対応
 
   if (!imageDimensions || tiles.length === 0) {
     return (
@@ -166,10 +162,13 @@ export default function TiledImage({ imageUrl, alt, tileSize = 200 }: TiledImage
       style={{ 
         minHeight: '400px',
         aspectRatio: `${imageDimensions.width} / ${imageDimensions.height}`,
+        userSelect: 'none',
+        WebkitUserSelect: 'none',
+        MozUserSelect: 'none',
+        msUserSelect: 'none',
       }}
       onContextMenu={handleContextMenu}
       onDragStart={handleDragStart}
-      onSelectStart={handleSelectStart}
     >
       <div
         className="relative"
@@ -214,10 +213,9 @@ export default function TiledImage({ imageUrl, alt, tileSize = 200 }: TiledImage
       </div>
       {/* 透明なオーバーレイで右クリックとドラッグを完全にブロック */}
       <div
-        className="absolute inset-0 z-10"
+        className="absolute inset-0 z-10 pointer-events-auto"
         onContextMenu={handleContextMenu}
         onDragStart={handleDragStart}
-        onSelectStart={handleSelectStart}
         style={{ 
           cursor: 'default',
           userSelect: 'none',

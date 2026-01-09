@@ -62,20 +62,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // サポーターの合計支援額を取得
-    const { data: supporterTotal } = await supabase
-      .from('supporter_totals')
-      .select('total_amount')
-      .eq('supporter_id', user.id)
-      .single();
-
     return NextResponse.json({
       success: true,
       donationId: donationRecord.id,
       amount,
       platformFee,
       authorEarning,
-      totalSupport: supporterTotal?.total_amount || amount,
       message: '投げ銭が完了しました',
     });
   } catch (error) {

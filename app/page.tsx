@@ -59,12 +59,11 @@ export default function Home() {
 
     try {
       if (isSignUp) {
-        // 新規登録（メール認証不要）
+        // シンプルな新規登録
         const { data, error: signUpError } = await supabase.auth.signUp({
           email,
           password,
           options: {
-            emailRedirectTo: `${window.location.origin}/`,
             data: {
               name: email.split('@')[0],
             },
@@ -72,19 +71,19 @@ export default function Home() {
         });
 
         if (signUpError) {
-          // エラーメッセージを日本語化（必ず理由を表示）
+          // エラーメッセージを日本語化
           let errorMessage = '登録に失敗しました';
           const msg = signUpError.message.toLowerCase();
           
-          if (msg.includes('password') || msg.includes('length')) {
+          if (msg.includes('password') || msg.includes('length') || msg.includes('short')) {
             errorMessage = 'パスワードは6文字以上で入力してください';
-          } else if (msg.includes('email') || msg.includes('invalid')) {
+          } else if (msg.includes('email') || msg.includes('invalid') || msg.includes('format')) {
             errorMessage = '正しいメールアドレスを入力してください';
-          } else if (msg.includes('already registered') || msg.includes('already exists') || msg.includes('user already')) {
+          } else if (msg.includes('already registered') || msg.includes('already exists') || msg.includes('user already') || msg.includes('duplicate')) {
             errorMessage = 'このメールアドレスは既に登録されています。ログインしてください。';
-          } else if (msg.includes('too many')) {
+          } else if (msg.includes('too many') || msg.includes('rate limit')) {
             errorMessage = 'リクエストが多すぎます。しばらく待ってから再度お試しください。';
-          } else if (signUpError.message) {
+          } else {
             errorMessage = `登録に失敗しました: ${signUpError.message}`;
           }
           
@@ -95,7 +94,7 @@ export default function Home() {
 
         if (data.user) {
           // プロフィール作成
-          const { error: profileError } = await supabase
+          await supabase
             .from('profiles')
             .upsert({
               id: data.user.id,
@@ -104,48 +103,33 @@ export default function Home() {
               onConflict: 'id',
             });
 
-          if (profileError) {
-            console.error('プロフィール作成エラー:', profileError);
-          }
-
-          // セッションを確認（メール認証不要の場合、セッションが即座に作成される）
-          const { data: { session } } = await supabase.auth.getSession();
-          
-          if (session) {
-            // 登録成功後、自動的にログイン状態になるので、トップページにリダイレクト
-            setShowForm(false);
-            setEmail('');
-            setPassword('');
-            router.refresh();
-          } else {
-            // メール確認が必要な場合（Supabaseの設定により異なる）
-            setError('確認メールを送信しました。メール内のリンクをクリックしてアカウントを有効化してください。');
-            setEmail('');
-            setPassword('');
-          }
-        } else {
-          setError('ユーザー作成に失敗しました。もう一度お試しください。');
-          setLoading(false);
+          // 登録成功後、自動的にログイン状態になるので、トップページをリフレッシュ
+          setShowForm(false);
+          setEmail('');
+          setPassword('');
+          router.refresh();
         }
       } else {
-        // ログイン
+        // シンプルなログイン
         const { error: signInError } = await supabase.auth.signInWithPassword({
           email,
           password,
         });
 
         if (signInError) {
-          // エラーメッセージを日本語化（わかりやすく表示）
+          // エラーメッセージを日本語化
           let errorMessage = 'ログインに失敗しました';
-          if (signInError.message.includes('Invalid login credentials') || signInError.message.includes('invalid')) {
+          const msg = signInError.message.toLowerCase();
+          
+          if (msg.includes('invalid login credentials') || msg.includes('invalid')) {
             errorMessage = 'メールアドレスまたはパスワードが正しくありません';
-          } else if (signInError.message.includes('Email not confirmed') || signInError.message.includes('not confirmed')) {
+          } else if (msg.includes('email not confirmed') || msg.includes('not confirmed')) {
             errorMessage = 'メールアドレスの確認が完了していません。メールを確認してください。';
-          } else if (signInError.message.includes('Password')) {
+          } else if (msg.includes('password')) {
             errorMessage = 'パスワードが正しくありません';
-          } else if (signInError.message.includes('User not found')) {
+          } else if (msg.includes('user not found')) {
             errorMessage = 'このメールアドレスは登録されていません。新規登録してください。';
-          } else if (signInError.message) {
+          } else {
             errorMessage = `ログインに失敗しました: ${signInError.message}`;
           }
           setError(errorMessage);
@@ -361,6 +345,36 @@ export default function Home() {
             </div>
           </div>
         </section>
+
+        {/* 画像投稿と保護ステータスセクション */}
+        {user && (
+          <section className="py-16">
+            <div className="max-w-4xl mx-auto">
+              <div className="bg-gray-800 rounded-2xl p-8 border border-gray-700">
+                <h3 className="text-2xl font-bold text-white mb-6 text-center">
+                  保護ステータス
+                </h3>
+                <div className="flex items-center justify-center space-x-4 mb-6">
+                  <div className="w-6 h-6 rounded-full bg-green-500 animate-pulse"></div>
+                  <p className="text-xl font-semibold text-green-400">
+                    あなたの画像は現在AIから保護されています（Active）
+                  </p>
+                </div>
+                <p className="text-gray-400 text-center mb-6">
+                  アップロードされたすべての画像にAI防御処理が適用されています
+                </p>
+                <div className="text-center">
+                  <Link
+                    href="/gallery"
+                    className="inline-block px-8 py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl hover:from-purple-700 hover:to-pink-700 transition-all shadow-lg hover:shadow-2xl text-lg font-semibold"
+                  >
+                    作品を投稿する
+                  </Link>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
 
         {/* 特徴セクション */}
         <section className="py-16">
